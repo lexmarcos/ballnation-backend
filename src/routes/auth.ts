@@ -7,10 +7,10 @@ const router = Router();
 
 router.post("/signup", async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { email, username, password } = req.body;
 
-    if (!username || !password) {
-      return res.status(400).json({ error: "Username and password are required." });
+    if (!email || !username || !password) {
+      return res.status(400).json({ error: "Username and password and email are required." });
     }
 
     const userExists = await User.findOne({ username });
@@ -22,6 +22,7 @@ router.post("/signup", async (req, res) => {
     const hashedPassword = bcrypt.hashSync(password, 8);
 
     const user = new User({
+      email,
       username,
       password: hashedPassword,
     });
@@ -34,7 +35,6 @@ router.post("/signup", async (req, res) => {
     res.status(500).send({ message: "An error occurred while creating user." });
   }
 });
-
 
 router.post("/login", async (req, res) => {
   try {
@@ -55,7 +55,7 @@ router.post("/login", async (req, res) => {
       return res.status(401).send({ auth: false, token: null });
     }
 
-    const token = jwt.sign({ id: user._id }, "your_secret_key", {
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
       expiresIn: 86400, // expira em 24 horas
     });
 
