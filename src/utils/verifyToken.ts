@@ -7,6 +7,7 @@ interface ISocket extends Socket {
 
 export const verifyToken = (socket: ISocket, next: (err?: Error) => void) => {
   const token = socket.handshake.query.token;
+  console.log(token);
   if (typeof token === "string") {
     jwt.verify(token, process.env.JWT_SECRET, (err: any, decoded: any) => {
       if (err) {
