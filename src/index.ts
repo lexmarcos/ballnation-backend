@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import authRoutes from "./routes/auth.js";
 import ServerAndSocket from "./utils/serverAndSocket.js";
-import { setupSocket } from "./websocket.js";
+import { setupSocket } from "./events/websocket.js";
 
 dotenv.config();
 
