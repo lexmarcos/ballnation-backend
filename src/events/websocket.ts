@@ -3,21 +3,40 @@ import { verifyToken } from "../utils/verifyToken.js";
 import { v4 as uuidv4 } from "uuid";
 import ServerAndSocket from "../utils/serverAndSocket.js";
 import { IEngineData, createEngine, gameLoop } from "../game/index.js";
-import { GameStatus, IPlayer, IRoom, IRooms } from "./types.js";
+import { GameStatus, IPlayer, IRoom, IRoomData, IRooms } from "./types.js";
+import Matter from "matter-js";
 
 export let rooms: IRooms = {};
 
 const io = ServerAndSocket.getInstance().io;
 
-const createRoom = (roomData: IRoom) => {
+const createRoom = (roomData: IRoomData) => {
   roomData.gameStatus = GameStatus.WaitingPlayers;
-  rooms[roomData.id] = roomData;
+  const roomObject: IRoom = {
+    data: roomData,
+    gameLoopInterval: null,
+    engineData: null,
+    gameState: {
+      score: {
+        blue: 0,
+        red: 0,
+      },
+      winner: "draw",
+      playersPositions: null,
+      ballPosition: {
+        x: 0,
+        y: 0,
+      },
+    },
+  };
+  rooms[roomData.id] = roomObject;
   io.to("lobby").emit("roomCreated", roomData);
 };
 
 const checkIfPlayerExistisInTeam = (room: string, team: string, username: string) => {
-  if(!rooms[room]) return false;
-  return rooms[room].teams[team].players.find(
+  const roomData = rooms[room].data;
+  if (!rooms[room]) return false;
+  return roomData.teams[team].players.find(
     (player: { username: string }) => player.username === username
   );
 };
@@ -32,28 +51,51 @@ const checkIfPlayerExistisInSomeTeam = (room: string, username: string): string 
   }
 };
 
+const getPlayersUsername = (room: string): string[] => {
+  const roomObject = rooms[room];
+  const roomData = rooms[room].data;
+  const playersUsername: string[] = [];
+  roomData.teams.blue.players.forEach((player) => {
+    playersUsername.push(player.username);
+  });
+  roomData.teams.red.players.forEach((player) => {
+    playersUsername.push(player.username);
+  });
+  return playersUsername;
+};
+
+const getPositionsOfPlayersBodies = (room: string): Matter.Vector[] => {
+  const players = getPlayersUsername(room);
+  const positions: Matter.Vector[] = [];
+  for (const player of players) {
+    const playerBody = rooms[room].engineData.players[player];
+    positions.push(playerBody.position);
+  }
+  return positions;
+};
+
 const initRoomGame = (room: string) => {
-  const roomData = rooms[room];
-  roomData.gameLoopInterval = null;
-  roomData.engineData = createEngine(roomData.numberOfPlayers);
-  roomData.gameState = {
+  const roomObject = rooms[room];
+  const roomData = rooms[room].data;
+  roomObject.gameLoopInterval = null;
+  roomObject.engineData = createEngine(getPlayersUsername(room));
+  roomObject.gameState = {
     score: {
       blue: 0,
       red: 0,
     },
     winner: "draw",
-    playersPositions: [],
-    ballPosition: {
-      x: 0,
-      y: 0,
-    },
+    playersPositions: getPositionsOfPlayersBodies(room),
+    ballPosition: roomObject.engineData.ball.position,
   };
-  rooms[room].gameStatus = GameStatus.Playing;
-  io.to(room).emit("startGame");
-  gameLoop(roomData.gameLoopInterval, roomData.engineData, roomData.gameState, room);
+  roomData.gameStatus = GameStatus.Playing;
+
+  io.to(room).emit("startGame", roomData);
+  gameLoop(roomObject.gameLoopInterval, roomObject.engineData, roomObject.gameState, room, io);
 };
 
 const insertPlayerInTeam = (room: string, team: string, username: string, socket: Socket) => {
+  const roomData = rooms[room].data;
   const player: IPlayer = {
     socketId: socket.id,
     username: username,
@@ -61,16 +103,34 @@ const insertPlayerInTeam = (room: string, team: string, username: string, socket
       goals: 0,
     },
   };
-  rooms[room].teams[team].players.push(player);
-  io.to(room).emit("joinedToTeam", rooms[room]);
-  io.to("lobby").emit("roomUpdated", rooms[room]);
-  const totalPlayers =
-    rooms[room].teams.blue.players.length + rooms[room].teams.red.players.length;
+  roomData.teams[team].players.push(player);
+  io.to(room).emit("joinedToTeam", roomData);
+  io.to("lobby").emit("roomUpdated", roomData);
+  const totalPlayers = roomData.teams.blue.players.length + roomData.teams.red.players.length;
 
   console.log(`user ${username} joined room ${room} on team ${team}`);
-  if (totalPlayers === rooms[room].numberOfPlayers) {
+  if (totalPlayers === roomData.numberOfPlayers) {
     initRoomGame(room);
   }
+};
+
+const generateNewPositionByMove = (move: string, position: Matter.Vector): Matter.Vector => {
+  const newPosition = Matter.Vector.create(position.x, position.y);
+  switch (move) {
+    case "up":
+      newPosition.y -= 5;
+      break;
+    case "down":
+      newPosition.y += 5;
+      break;
+    case "left":
+      newPosition.x -= 5;
+      break;
+    case "right":
+      newPosition.x += 5;
+      break;
+  }
+  return newPosition;
 };
 
 export const setupSocket = () => {
@@ -83,7 +143,7 @@ export const setupSocket = () => {
       console.log("user disconnected ", socket.id);
     });
 
-    socket.on("createRoom", (roomData: IRoom, callback: Function) => {
+    socket.on("createRoom", (roomData: IRoomData, callback: Function) => {
       console.log("roomData", roomData);
       callback("success");
       createRoom(roomData);
@@ -97,11 +157,13 @@ export const setupSocket = () => {
     });
 
     socket.on("joinTeam", ({ room, team, username }) => {
+      const roomObject = rooms[room];
+      const roomData = rooms[room].data;
       if (!rooms[room]) {
         socket.emit("error", "Room does not exist");
-      } else if (rooms[room].gameStatus !== GameStatus.WaitingPlayers) {
+      } else if (roomData.gameStatus !== GameStatus.WaitingPlayers) {
         socket.emit("error", "Game already started");
-      } else if (rooms[room].teams[team].players.length >= rooms[room].numberOfPlayers / 2) {
+      } else if (roomData.teams[team].players.length >= roomData.numberOfPlayers / 2) {
         socket.emit("error", "Team is full");
       } else if (checkIfPlayerExistisInTeam(room, team, username)) {
         socket.emit("error", "Username already exists in this team");
@@ -113,20 +175,30 @@ export const setupSocket = () => {
     });
 
     socket.on("joinRoom", ({ room, username }) => {
+      if (!rooms[room]) {
+        return socket.emit("error", "Room does not exist");
+      }
+      const roomData = rooms[room].data;
       console.log("user joined room", room);
       const teamOfPlayer = checkIfPlayerExistisInSomeTeam(room, username);
-      if (!rooms[room]) {
-        socket.emit("error", "Room does not exist");
-      }
-      if (rooms[room].gameStatus === GameStatus.Playing) {
+
+      if (roomData.gameStatus === GameStatus.Playing) {
         if (teamOfPlayer !== "no team") {
-          rooms[room].teams[teamOfPlayer].players.find(
+          roomData.teams[teamOfPlayer].players.find(
             (player: IPlayer) => player.username === username
           ).status = "online";
         }
       }
       socket.join(room);
-      socket.emit("joinedRoom", rooms[room]);
+      socket.emit("joinedRoom", roomData);
+    });
+
+    socket.on("move", ({ move, username, room }) => {
+      if (!rooms[room]) return console.log("room does not exist");
+      const player = rooms[room].engineData.players[username];
+      if (player) {
+        Matter.Body.setPosition(player, generateNewPositionByMove(move, player.position));
+      }
     });
 
     socket.on("message", (data) => {

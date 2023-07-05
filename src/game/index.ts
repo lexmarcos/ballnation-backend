@@ -2,7 +2,8 @@ import Matter from "matter-js";
 
 import ServerAndSocket from "../utils/serverAndSocket.js";
 import { IGameState } from "../events/types.js";
-const io = ServerAndSocket.getInstance().io;
+import { Server } from "socket.io";
+// const io = ServerAndSocket.getInstance().io;
 
 export interface IEngineData {
   engine: Matter.Engine;
@@ -18,10 +19,12 @@ export interface IEngineData {
   minGoalY: number;
   detectorGoalA: Matter.Detector;
   detectorGoalB: Matter.Detector;
-  players: Matter.Body[];
+  players: {
+    [key: string]: Matter.Body;
+  };
 }
 
-export const createEngine = (numberOfPlayers: number): IEngineData => {
+export const createEngine = (playersUsername: string[]): IEngineData => {
   const engine = Matter.Engine.create();
   const worldBounds = {
     min: { x: 0, y: 0 },
@@ -42,22 +45,20 @@ export const createEngine = (numberOfPlayers: number): IEngineData => {
     friction: 0,
     frictionStatic: 0,
     frictionAir: 0,
-    restitution: 1,
+    restitution: 0.5,
   };
 
-  const ball = Matter.Bodies.circle(400, 300, 10, ballSettings);
-  const players: Matter.Body[] = [];
+  const ball = Matter.Bodies.circle(860, 360, 5, ballSettings);
+  const players: { [key: string]: Matter.Body } = {};
 
-  for (let i = 0; i < numberOfPlayers; i++) {
-    players.push(
-      Matter.Bodies.rectangle(400, 300, 10, 10, {
-        isStatic: true,
-        inertia: 0,
-        friction: 0,
-        frictionStatic: 0,
-        frictionAir: 0,
-      })
-    );
+  for (let i = 0; i < playersUsername.length; i++) {
+    players[playersUsername[i]] = Matter.Bodies.circle(400, 300, 20, {
+      isStatic: true,
+      inertia: 0,
+      friction: 0,
+      frictionStatic: 0,
+      frictionAir: 0,
+    });
   }
   const wallSettings: Matter.IBodyDefinition = {
     isStatic: true,
@@ -95,7 +96,7 @@ export const createEngine = (numberOfPlayers: number): IEngineData => {
     rightWall,
     topWall,
     bottomWall,
-    ...players,
+    ...Object.values(players),
   ]);
 
   const detectorGoalA = Matter.Detector.create({
@@ -130,10 +131,11 @@ function resetBall(ball: Matter.Body) {
 }
 
 export const gameLoop = (
-  gameLoopInterval,
+  gameLoopInterval: NodeJS.Timeout,
   engineData: IEngineData,
   gameState: IGameState,
-  roomName: string
+  roomName: string,
+  io: Server
 ) => {
   if (gameLoopInterval) {
     clearTimeout(gameLoopInterval);
@@ -141,7 +143,7 @@ export const gameLoop = (
   Matter.Engine.update(engineData.engine, 1000 / 60);
   io.to(roomName).emit("gameState", gameState);
   gameLoopInterval = setTimeout(
-    () => gameLoop(gameLoopInterval, engineData, gameState, roomName),
+    () => gameLoop(gameLoopInterval, engineData, gameState, roomName, io),
     1000 / 60
   );
 };
