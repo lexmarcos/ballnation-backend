@@ -68,7 +68,7 @@ const getPositionsOfPlayersBodies = (room: string): Matter.Vector[] => {
   const players = getPlayersUsername(room);
   const positions: Matter.Vector[] = [];
   for (const player of players) {
-    const playerBody = rooms[room].engineData.players[player];
+    const playerBody = rooms[room].engineData.playersBodies[player];
     positions.push(playerBody.position);
   }
   return positions;
@@ -195,7 +195,7 @@ export const setupSocket = () => {
 
     socket.on("move", ({ move, username, room }) => {
       if (!rooms[room]) return console.log("room does not exist");
-      const player = rooms[room].engineData.players[username];
+      const player = rooms[room].engineData.playersBodies[username];
       if (player) {
         Matter.Body.setPosition(player, generateNewPositionByMove(move, player.position));
       }
