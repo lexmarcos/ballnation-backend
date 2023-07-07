@@ -1,7 +1,7 @@
 import Matter from "matter-js";
 
 import ServerAndSocket from "../utils/serverAndSocket.js";
-import { IGameState } from "../events/types.js";
+import { GameStatus, IGameState } from "../events/types.js";
 import { Server } from "socket.io";
 // const io = ServerAndSocket.getInstance().io;
 
@@ -196,19 +196,32 @@ function resetBall(ball: Matter.Body) {
   Matter.Body.setVelocity(ball, { x: 0, y: 0 });
 }
 
+function resetPlayers(players: IPlayerBodies) {
+  Object.values(players).forEach((player) => {
+    Matter.Body.setPosition(player.body, { x: player.body.position.x, y: player.body.position.y });
+    Matter.Body.setVelocity(player.body, { x: 0, y: 0 });
+  });
+}
+
 const checkGoal = (engineData: IEngineData, gameState: IGameState) => {
   const goalACollision = Matter.Detector.collisions(engineData.detectorGoalA);
   const goalBCollision = Matter.Detector.collisions(engineData.detectorGoalB);
 
   if (goalACollision.length > 0) {
     gameState.score.red++;
+    gameState.gameStatus = GameStatus.Reseting;
     resetBall(engineData.ball);
   }
 
   if (goalBCollision.length > 0) {
     gameState.score.blue++;
+    gameState.gameStatus = GameStatus.Reseting;
     resetBall(engineData.ball);
   }
+
+  setTimeout(() => {
+    gameState.gameStatus = GameStatus.Playing;
+  }, 1000);
 };
 
 export const applyForceOnBall = (

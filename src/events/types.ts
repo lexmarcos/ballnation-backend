@@ -15,6 +15,7 @@ export interface IPlayer {
 export enum GameStatus {
   WaitingPlayers = "waiting players",
   Playing = "playing",
+  Reseting = "reseting",
   FinishedGame = "finished game",
 }
 
@@ -27,14 +28,20 @@ interface IPosition {
   y: number;
 }
 
+export interface IPlayerInfo {
+  position: Matter.Vector;
+  team: "blue" | "red";
+}
+
 export interface IGameState {
   score: {
     blue: number;
     red: number;
   };
   winner: "blue" | "red" | "draw";
-  playersPositions: Matter.Vector[];
+  playersInfos: IPlayerInfo[];
   ballPosition: IPosition;
+  gameStatus: GameStatus;
 }
 
 export interface IRoomsData {
@@ -50,7 +57,6 @@ export interface IRoomData {
     blue: ITeam;
     red: ITeam;
   };
-  gameStatus: GameStatus;
   id: string;
 }
 

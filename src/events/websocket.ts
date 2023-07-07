@@ -10,7 +10,7 @@ import {
   createEngine,
   gameLoop,
 } from "../game/index.js";
-import { GameStatus, IPlayer, IRoom, IRoomData, IRooms, IRoomsData } from "./types.js";
+import { GameStatus, IPlayer, IPlayerInfo, IRoom, IRoomData, IRooms, IRoomsData } from "./types.js";
 import Matter from "matter-js";
 
 export let rooms: IRooms = {};
@@ -18,18 +18,18 @@ export let rooms: IRooms = {};
 const io = ServerAndSocket.getInstance().io;
 
 const createRoom = (roomData: IRoomData) => {
-  roomData.gameStatus = GameStatus.WaitingPlayers;
   const roomObject: IRoom = {
     data: roomData,
     gameLoopInterval: null,
     engineData: null,
     gameState: {
+      gameStatus: GameStatus.WaitingPlayers,
       score: {
         blue: 0,
         red: 0,
       },
       winner: "draw",
-      playersPositions: null,
+      playersInfos: null,
       ballPosition: {
         x: 0,
         y: 0,
@@ -71,12 +71,15 @@ const getPlayersUsername = (room: string): string[] => {
   return playersUsername;
 };
 
-const getPositionsOfPlayersBodies = (room: string): Matter.Vector[] => {
+const getPositionsOfPlayersBodies = (room: string) => {
   const players = getPlayersUsername(room);
-  const positions: Matter.Vector[] = [];
+  const positions: IPlayerInfo[] = [];
   for (const player of players) {
     const playerBody = rooms[room].engineData.playersBodies[player];
-    positions.push(playerBody.body.position);
+    positions.push({
+      position: playerBody.body.position,
+      team: checkIfPlayerExistisInSomeTeam(room, player) as "blue" | "red",
+    });
   }
   return positions;
 };
@@ -104,10 +107,10 @@ const initRoomGame = (room: string) => {
       red: 0,
     },
     winner: "draw",
-    playersPositions: getPositionsOfPlayersBodies(room),
+    playersInfos: getPositionsOfPlayersBodies(room),
     ballPosition: roomObject.engineData.ball.position,
+    gameStatus: GameStatus.Playing,
   };
-  roomData.gameStatus = GameStatus.Playing;
 
   io.to(room).emit("startGame", roomData);
   gameLoop(roomObject.gameLoopInterval, roomObject.engineData, roomObject.gameState, room, io);
@@ -194,7 +197,7 @@ export const setupSocket = () => {
       const roomData = rooms[room].data;
       if (!rooms[room]) {
         socket.emit("error", "Room does not exist");
-      } else if (roomData.gameStatus !== GameStatus.WaitingPlayers) {
+      } else if (roomObject.gameState.gameStatus !== GameStatus.WaitingPlayers) {
         socket.emit("error", "Game already started");
       } else if (roomData.teams[team].players.length >= roomData.numberOfPlayers / 2) {
         socket.emit("error", "Team is full");
@@ -212,10 +215,11 @@ export const setupSocket = () => {
         return socket.emit("error", "Room does not exist");
       }
       const roomData = rooms[room].data;
+      const roomObject = rooms[room];
       console.log("user joined room", room);
       const teamOfPlayer = checkIfPlayerExistisInSomeTeam(room, username);
 
-      if (roomData.gameStatus === GameStatus.Playing) {
+      if (roomObject.gameState.gameStatus === GameStatus.Playing) {
         if (teamOfPlayer !== "no team") {
           roomData.teams[teamOfPlayer].players.find(
             (player: IPlayer) => player.username === username
