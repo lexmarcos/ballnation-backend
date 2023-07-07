@@ -5,6 +5,15 @@ import { IGameState } from "../events/types.js";
 import { Server } from "socket.io";
 // const io = ServerAndSocket.getInstance().io;
 
+export interface IPlayerEngineData {
+  body: Matter.Body;
+  detector: Matter.Detector;
+}
+
+export interface IPlayerBodies {
+  [key: string]: IPlayerEngineData;
+}
+
 export interface IEngineData {
   engine: Matter.Engine;
   goalA: Matter.Body;
@@ -18,26 +27,59 @@ export interface IEngineData {
   minGoalY: number;
   detectorGoalA: Matter.Detector;
   detectorGoalB: Matter.Detector;
-  playersBodies: {
-    [key: string]: Matter.Body;
-  };
+  playersBodies: IPlayerBodies;
 }
 
-const generatePlayersBodies = (playersUsername: string[]) => {
-  const players: { [key: string]: Matter.Body } = {};
-  const startPosition = 360 - (playersUsername.length - 1) * 40;
-  for (let i = 0; i < playersUsername.length; i++) {
-    players[playersUsername[i]] = Matter.Bodies.circle(400, startPosition + i * 80, 20, {
-      inertia: 0,
-      friction: 0,
-      frictionStatic: 0,
-      frictionAir: 0,
+const PLAYER_RADIUS = 30;
+const BALL_RADIUS = 10;
+
+export function getBodiesFromPlayerBodies(playerBodies: IPlayerBodies): Matter.Body[] {
+  return Object.values(playerBodies).map((player) => player.body);
+}
+
+const generateBodiesByTeam = (
+  teamPlayers: string[],
+  ball: Matter.Body,
+  playersBodyObj: IPlayerBodies,
+  side: string
+) => {
+  const startPosition = 360 - (teamPlayers.length - 1) * 40;
+  for (let i = 0; i < teamPlayers.length; i++) {
+    const playerBody = Matter.Bodies.circle(
+      side === "left" ? 400 : 880,
+      startPosition + i * 80,
+      PLAYER_RADIUS,
+      {
+        inertia: 0,
+        friction: 0,
+        frictionStatic: 0,
+        frictionAir: 0.2,
+      }
+    );
+    const detector = Matter.Detector.create({
+      bodies: [ball, playerBody],
     });
+    playersBodyObj[teamPlayers[i]] = {
+      body: playerBody,
+      detector,
+    };
   }
+};
+
+const generatePlayersBodies = (bluePlayers: string[], redPlayers: string[], ball: Matter.Body) => {
+  const players: IPlayerBodies = {};
+  generateBodiesByTeam(bluePlayers, ball, players, "left");
+  generateBodiesByTeam(redPlayers, ball, players, "right");
   return players;
 };
 
-export const createEngine = (playersUsername: string[]): IEngineData => {
+export const createEngine = ({
+  blueTeam,
+  redTeam,
+}: {
+  blueTeam: string[];
+  redTeam: string[];
+}): IEngineData => {
   const engine = Matter.Engine.create();
   const worldBounds = {
     min: { x: 0, y: 0 },
@@ -56,11 +98,11 @@ export const createEngine = (playersUsername: string[]): IEngineData => {
     inertia: 0,
     friction: 0,
     frictionStatic: 0,
-    frictionAir: 0,
+    frictionAir: 0.1,
     restitution: 1,
   };
 
-  const ball = Matter.Bodies.circle(860, 360, 5, ballSettings);
+  const ball = Matter.Bodies.circle(610, 360, BALL_RADIUS, ballSettings);
 
   const wallSettings: Matter.IBodyDefinition = {
     isStatic: true,
@@ -83,35 +125,35 @@ export const createEngine = (playersUsername: string[]): IEngineData => {
   );
 
   const leftWall = Matter.Bodies.rectangle(
-    -5,
+    -1000,
     worldBounds.max.y / 2,
-    10,
+    2000,
     worldBounds.max.y,
     wallSettings
   );
   const rightWall = Matter.Bodies.rectangle(
-    worldBounds.max.x + 5,
+    worldBounds.max.x + 1000,
     worldBounds.max.y / 2,
-    10,
+    2000,
     worldBounds.max.y,
     wallSettings
   );
   const topWall = Matter.Bodies.rectangle(
     worldBounds.max.x / 2,
-    -5,
+    -1000,
     worldBounds.max.x,
-    10,
+    2000,
     wallSettings
   );
   const bottomWall = Matter.Bodies.rectangle(
     worldBounds.max.x / 2,
-    worldBounds.max.y + 5,
+    worldBounds.max.y + 1000,
     worldBounds.max.x,
-    10,
+    2000,
     wallSettings
   );
 
-  const playersBodies = generatePlayersBodies(playersUsername);
+  const playersBodies = generatePlayersBodies(blueTeam, redTeam, ball);
 
   Matter.World.add(engine.world, [
     goalA,
@@ -121,7 +163,7 @@ export const createEngine = (playersUsername: string[]): IEngineData => {
     rightWall,
     topWall,
     bottomWall,
-    ...Object.values(playersBodies),
+    ...Object.values(getBodiesFromPlayerBodies(playersBodies)),
   ]);
 
   const detectorGoalA = Matter.Detector.create({
@@ -154,6 +196,48 @@ function resetBall(ball: Matter.Body) {
   Matter.Body.setVelocity(ball, { x: 0, y: 0 });
 }
 
+const checkGoal = (engineData: IEngineData, gameState: IGameState) => {
+  const goalACollision = Matter.Detector.collisions(engineData.detectorGoalA);
+  const goalBCollision = Matter.Detector.collisions(engineData.detectorGoalB);
+
+  if (goalACollision.length > 0) {
+    gameState.score.red++;
+    resetBall(engineData.ball);
+  }
+
+  if (goalBCollision.length > 0) {
+    gameState.score.blue++;
+    resetBall(engineData.ball);
+  }
+};
+
+export const applyForceOnBall = (
+  playerDetector: Matter.Detector,
+  ball: Matter.Body,
+  playerBody: Matter.Body
+) => {
+  const playerVelocity = playerBody.velocity;
+
+  // Normalize the player's velocity to get the direction of movement
+  const directionMagnitude = Math.sqrt(
+    Math.pow(playerVelocity.x, 2) + Math.pow(playerVelocity.y, 2)
+  );
+  const directionNormalized = {
+    x: playerVelocity.x / directionMagnitude,
+    y: playerVelocity.y / directionMagnitude,
+  };
+
+  // We check if the ball and player are touching using Matter.SAT.collides
+  const ballCollisionWithPlayer = Matter.Detector.collisions(playerDetector);
+  if (ballCollisionWithPlayer.length > 0) {
+    // Apply force in the direction the player was moving
+    Matter.Body.applyForce(ball, ball.position, {
+      x: directionNormalized.x * 0.07,
+      y: directionNormalized.y * 0.07,
+    });
+  }
+};
+
 export const gameLoop = (
   gameLoopInterval: NodeJS.Timeout,
   engineData: IEngineData,
@@ -164,21 +248,8 @@ export const gameLoop = (
   if (gameLoopInterval) {
     clearTimeout(gameLoopInterval);
   }
-
-  const goalACollision = Matter.Detector.collisions(engineData.detectorGoalA);
-  const goalBCollision = Matter.Detector.collisions(engineData.detectorGoalB);
-
-  if (goalACollision.length > 0) {
-    console.log("Ball collided with Goal A");
-    resetBall(engineData.ball);
-  }
-
-  if (goalBCollision.length > 0) {
-    console.log("Ball collided with Goal B");
-    resetBall(engineData.ball);
-  }
-
   Matter.Engine.update(engineData.engine, 1000 / 60);
+  checkGoal(engineData, gameState);
   io.to(roomName).emit("gameState", gameState);
   gameLoopInterval = setTimeout(
     () => gameLoop(gameLoopInterval, engineData, gameState, roomName, io),

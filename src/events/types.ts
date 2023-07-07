@@ -37,6 +37,10 @@ export interface IGameState {
   ballPosition: IPosition;
 }
 
+export interface IRoomsData {
+  [key: string]: IRoomData;
+}
+
 export interface IRoomData {
   room: string;
   numberOfPlayers: 2 | 4 | 6 | 8;

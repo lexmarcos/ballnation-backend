@@ -2,8 +2,15 @@ import { Socket } from "socket.io";
 import { verifyToken } from "../utils/verifyToken.js";
 import { v4 as uuidv4 } from "uuid";
 import ServerAndSocket from "../utils/serverAndSocket.js";
-import { IEngineData, createEngine, gameLoop } from "../game/index.js";
-import { GameStatus, IPlayer, IRoom, IRoomData, IRooms } from "./types.js";
+import {
+  IEngineData,
+  IPlayerBodies,
+  IPlayerEngineData,
+  applyForceOnBall,
+  createEngine,
+  gameLoop,
+} from "../game/index.js";
+import { GameStatus, IPlayer, IRoom, IRoomData, IRooms, IRoomsData } from "./types.js";
 import Matter from "matter-js";
 
 export let rooms: IRooms = {};
@@ -69,16 +76,28 @@ const getPositionsOfPlayersBodies = (room: string): Matter.Vector[] => {
   const positions: Matter.Vector[] = [];
   for (const player of players) {
     const playerBody = rooms[room].engineData.playersBodies[player];
-    positions.push(playerBody.position);
+    positions.push(playerBody.body.position);
   }
   return positions;
+};
+
+const getPlayersUsernameByTeam = (room: string, team: string): string[] => {
+  const roomData = rooms[room].data;
+  const playersUsername: string[] = [];
+  roomData.teams[team].players.forEach((player) => {
+    playersUsername.push(player.username);
+  });
+  return playersUsername;
 };
 
 const initRoomGame = (room: string) => {
   const roomObject = rooms[room];
   const roomData = rooms[room].data;
   roomObject.gameLoopInterval = null;
-  roomObject.engineData = createEngine(getPlayersUsername(room));
+  roomObject.engineData = createEngine({
+    blueTeam: getPlayersUsernameByTeam(room, "blue"),
+    redTeam: getPlayersUsernameByTeam(room, "red"),
+  });
   roomObject.gameState = {
     score: {
       blue: 0,
@@ -114,23 +133,37 @@ const insertPlayerInTeam = (room: string, team: string, username: string, socket
   }
 };
 
-const generateNewPositionByMove = (move: string, position: Matter.Vector): Matter.Vector => {
-  const newPosition = Matter.Vector.create(position.x, position.y);
+const generateNewVelocityByMove = (
+  move: string,
+  playerBody: Matter.Body,
+  player: IPlayerEngineData,
+  room: IRoom
+) => {
   switch (move) {
     case "up":
-      newPosition.y -= 5;
+      Matter.Body.setVelocity(playerBody, { x: playerBody.velocity.x, y: -3 });
       break;
     case "down":
-      newPosition.y += 5;
+      Matter.Body.setVelocity(playerBody, { x: playerBody.velocity.x, y: 3 });
       break;
     case "left":
-      newPosition.x -= 5;
+      Matter.Body.setVelocity(playerBody, { x: -3, y: playerBody.velocity.y });
       break;
     case "right":
-      newPosition.x += 5;
+      Matter.Body.setVelocity(playerBody, { x: 3, y: playerBody.velocity.y });
+      break;
+    case "shoot":
+      applyForceOnBall(player.detector, room.engineData.ball, playerBody);
       break;
   }
-  return newPosition;
+};
+
+const getAllRoomData = () => {
+  const roomDatas: IRoomsData = {};
+  for (const room in rooms) {
+    roomDatas[room] = rooms[room].data;
+  }
+  return roomDatas;
 };
 
 export const setupSocket = () => {
@@ -153,7 +186,7 @@ export const setupSocket = () => {
       console.log("user joined to lobby");
 
       socket.join("lobby");
-      socket.emit("allRooms", rooms);
+      socket.emit("allRooms", getAllRoomData());
     });
 
     socket.on("joinTeam", ({ room, team, username }) => {
@@ -194,10 +227,11 @@ export const setupSocket = () => {
     });
 
     socket.on("move", ({ move, username, room }) => {
-      if (!rooms[room]) return console.log("room does not exist");
-      const player = rooms[room].engineData.playersBodies[username];
+      const roomObject = rooms[room];
+      if (!roomObject) return console.log("room does not exist");
+      const player = roomObject.engineData.playersBodies[username];
       if (player) {
-        Matter.Body.setPosition(player, generateNewPositionByMove(move, player.position));
+        generateNewVelocityByMove(move, player.body, player, roomObject);
       }
     });
 
