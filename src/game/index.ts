@@ -283,7 +283,7 @@ export const gameLoop = (
       setTimeout(() => {
         console.log("game finished and go to waiting players");
         roomData.gameStatus = GameStatus.WaitingPlayers;
-        io.to(roomName).emit("-", roomData);
+        io.to(roomName).emit("awaitingPlayersAgain", roomData);
       }, 10000);
     }
 
