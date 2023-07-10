@@ -1,13 +1,14 @@
 import Matter from "matter-js";
 
 import ServerAndSocket from "../utils/serverAndSocket.js";
-import { GameStatus, IGameState } from "../events/types.js";
+import { GameStatus, IGameState, IRoomData } from "../events/types.js";
 import { Server } from "socket.io";
 // const io = ServerAndSocket.getInstance().io;
 
 export interface IPlayerEngineData {
   body: Matter.Body;
   detector: Matter.Detector;
+  team: "blue" | "red";
 }
 
 export interface IPlayerBodies {
@@ -41,12 +42,12 @@ const generateBodiesByTeam = (
   teamPlayers: string[],
   ball: Matter.Body,
   playersBodyObj: IPlayerBodies,
-  side: string
+  team: "blue" | "red"
 ) => {
   const startPosition = 360 - (teamPlayers.length - 1) * 40;
   for (let i = 0; i < teamPlayers.length; i++) {
     const playerBody = Matter.Bodies.circle(
-      side === "left" ? 400 : 880,
+      team === "blue" ? 400 : 880,
       startPosition + i * 80,
       PLAYER_RADIUS,
       {
@@ -62,14 +63,15 @@ const generateBodiesByTeam = (
     playersBodyObj[teamPlayers[i]] = {
       body: playerBody,
       detector,
+      team,
     };
   }
 };
 
 const generatePlayersBodies = (bluePlayers: string[], redPlayers: string[], ball: Matter.Body) => {
   const players: IPlayerBodies = {};
-  generateBodiesByTeam(bluePlayers, ball, players, "left");
-  generateBodiesByTeam(redPlayers, ball, players, "right");
+  generateBodiesByTeam(bluePlayers, ball, players, "blue");
+  generateBodiesByTeam(redPlayers, ball, players, "red");
   return players;
 };
 
@@ -102,7 +104,7 @@ export const createEngine = ({
     restitution: 1,
   };
 
-  const ball = Matter.Bodies.circle(610, 360, BALL_RADIUS, ballSettings);
+  const ball = Matter.Bodies.circle(640, 360, BALL_RADIUS, ballSettings);
 
   const wallSettings: Matter.IBodyDefinition = {
     isStatic: true,
@@ -124,31 +126,19 @@ export const createEngine = ({
     { isStatic: true, inertia: 0, friction: 0, frictionStatic: 0, frictionAir: 0 }
   );
 
-  const leftWall = Matter.Bodies.rectangle(
-    -1000,
-    worldBounds.max.y / 2,
-    2000,
-    worldBounds.max.y,
-    wallSettings
-  );
+  const leftWall = Matter.Bodies.rectangle(-1000, worldBounds.max.y / 2, 2000, 3000, wallSettings);
   const rightWall = Matter.Bodies.rectangle(
     worldBounds.max.x + 1000,
     worldBounds.max.y / 2,
     2000,
-    worldBounds.max.y,
+    3000,
     wallSettings
   );
-  const topWall = Matter.Bodies.rectangle(
-    worldBounds.max.x / 2,
-    -1000,
-    worldBounds.max.x,
-    2000,
-    wallSettings
-  );
+  const topWall = Matter.Bodies.rectangle(worldBounds.max.x / 2, -1000, 3000, 2000, wallSettings);
   const bottomWall = Matter.Bodies.rectangle(
     worldBounds.max.x / 2,
     worldBounds.max.y + 1000,
-    worldBounds.max.x,
+    3000,
     2000,
     wallSettings
   );
@@ -192,36 +182,44 @@ export const createEngine = ({
 };
 
 function resetBall(ball: Matter.Body) {
-  Matter.Body.setPosition(ball, { x: 610, y: 360 });
+  Matter.Body.setPosition(ball, { x: 640, y: 360 });
   Matter.Body.setVelocity(ball, { x: 0, y: 0 });
 }
 
+const getPlayerBodiesByTeam = (playersBodies: IPlayerBodies, team: "blue" | "red") => {
+  return Object.values(playersBodies).filter((player) => player.team === team);
+};
+
 function resetPlayers(players: IPlayerBodies) {
-  Object.values(players).forEach((player) => {
-    Matter.Body.setPosition(player.body, { x: player.body.position.x, y: player.body.position.y });
-    Matter.Body.setVelocity(player.body, { x: 0, y: 0 });
-  });
+  const bluePlayers = getPlayerBodiesByTeam(players, "blue");
+  const redPlayers = getPlayerBodiesByTeam(players, "red");
+  const startPositionBlue = 360 - (bluePlayers.length - 1) * 40;
+  const startPositionRed = 360 - (redPlayers.length - 1) * 40;
+  for (let i = 0; i < bluePlayers.length; i++) {
+    Matter.Body.setPosition(bluePlayers[i].body, { x: 400, y: startPositionBlue + i * 80 });
+    Matter.Body.setVelocity(bluePlayers[i].body, { x: 0, y: 0 });
+  }
+  for (let i = 0; i < redPlayers.length; i++) {
+    Matter.Body.setPosition(redPlayers[i].body, { x: 880, y: startPositionRed + i * 80 });
+    Matter.Body.setVelocity(redPlayers[i].body, { x: 0, y: 0 });
+  }
 }
 
-const checkGoal = (engineData: IEngineData, gameState: IGameState) => {
+const checkGoal = (engineData: IEngineData, gameState: IGameState, roomData: IRoomData) => {
   const goalACollision = Matter.Detector.collisions(engineData.detectorGoalA);
   const goalBCollision = Matter.Detector.collisions(engineData.detectorGoalB);
 
   if (goalACollision.length > 0) {
     gameState.score.red++;
-    gameState.gameStatus = GameStatus.Reseting;
     resetBall(engineData.ball);
+    resetPlayers(engineData.playersBodies);
   }
 
   if (goalBCollision.length > 0) {
     gameState.score.blue++;
-    gameState.gameStatus = GameStatus.Reseting;
     resetBall(engineData.ball);
+    resetPlayers(engineData.playersBodies);
   }
-
-  setTimeout(() => {
-    gameState.gameStatus = GameStatus.Playing;
-  }, 1000);
 };
 
 export const applyForceOnBall = (
@@ -230,8 +228,6 @@ export const applyForceOnBall = (
   playerBody: Matter.Body
 ) => {
   const playerVelocity = playerBody.velocity;
-
-  // Normalize the player's velocity to get the direction of movement
   const directionMagnitude = Math.sqrt(
     Math.pow(playerVelocity.x, 2) + Math.pow(playerVelocity.y, 2)
   );
@@ -240,10 +236,8 @@ export const applyForceOnBall = (
     y: playerVelocity.y / directionMagnitude,
   };
 
-  // We check if the ball and player are touching using Matter.SAT.collides
   const ballCollisionWithPlayer = Matter.Detector.collisions(playerDetector);
   if (ballCollisionWithPlayer.length > 0) {
-    // Apply force in the direction the player was moving
     Matter.Body.applyForce(ball, ball.position, {
       x: directionNormalized.x * 0.07,
       y: directionNormalized.y * 0.07,
@@ -251,21 +245,52 @@ export const applyForceOnBall = (
   }
 };
 
+const checkIfGameIsFinished = (gameState: IGameState, goalsToWin: number) => {
+  if (gameState.score.blue >= goalsToWin || gameState.score.red >= goalsToWin) {
+    return true;
+  }
+  return false;
+};
+
+const checkWhatTeamWon = (gameState: IGameState) => {
+  if (gameState.score.blue > gameState.score.red) {
+    return "blue";
+  }
+  if (gameState.score.red > gameState.score.blue) {
+    return "red";
+  }
+  return "draw";
+};
+
 export const gameLoop = (
   gameLoopInterval: NodeJS.Timeout,
   engineData: IEngineData,
   gameState: IGameState,
   roomName: string,
+  roomData: IRoomData,
   io: Server
 ) => {
   if (gameLoopInterval) {
     clearTimeout(gameLoopInterval);
   }
-  Matter.Engine.update(engineData.engine, 1000 / 60);
-  checkGoal(engineData, gameState);
-  io.to(roomName).emit("gameState", gameState);
-  gameLoopInterval = setTimeout(
-    () => gameLoop(gameLoopInterval, engineData, gameState, roomName, io),
-    1000 / 60
-  );
+  if (roomData.gameStatus === GameStatus.Playing) {
+    Matter.Engine.update(engineData.engine, 1000 / 60);
+    checkGoal(engineData, gameState, roomData);
+
+    if (checkIfGameIsFinished(gameState, roomData.goalsToWin)) {
+      roomData.gameStatus = GameStatus.FinishedGame;
+      io.to(roomName).emit("gameFinished", checkWhatTeamWon(gameState));
+      setTimeout(() => {
+        console.log("game finished and go to waiting players");
+        roomData.gameStatus = GameStatus.WaitingPlayers;
+        io.to(roomName).emit("-", roomData);
+      }, 10000);
+    }
+
+    io.to(roomName).emit("gameState", gameState);
+    gameLoopInterval = setTimeout(
+      () => gameLoop(gameLoopInterval, engineData, gameState, roomName, roomData, io),
+      1000 / 60
+    );
+  }
 };

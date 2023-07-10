@@ -41,7 +41,6 @@ export interface IGameState {
   winner: "blue" | "red" | "draw";
   playersInfos: IPlayerInfo[];
   ballPosition: IPosition;
-  gameStatus: GameStatus;
 }
 
 export interface IRoomsData {
@@ -52,12 +51,14 @@ export interface IRoomData {
   room: string;
   numberOfPlayers: 2 | 4 | 6 | 8;
   typeOfGame: "classic" | "withPowerUps";
-  duration: number;
+  goalsToWin: number;
   teams: {
     blue: ITeam;
     red: ITeam;
   };
   id: string;
+  gameStatus: GameStatus;
+  owner: string;
 }
 
 export interface IRoom {

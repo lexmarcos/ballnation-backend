@@ -2,14 +2,7 @@ import { Socket } from "socket.io";
 import { verifyToken } from "../utils/verifyToken.js";
 import { v4 as uuidv4 } from "uuid";
 import ServerAndSocket from "../utils/serverAndSocket.js";
-import {
-  IEngineData,
-  IPlayerBodies,
-  IPlayerEngineData,
-  applyForceOnBall,
-  createEngine,
-  gameLoop,
-} from "../game/index.js";
+import { IPlayerEngineData, applyForceOnBall, createEngine, gameLoop } from "../game/index.js";
 import { GameStatus, IPlayer, IPlayerInfo, IRoom, IRoomData, IRooms, IRoomsData } from "./types.js";
 import Matter from "matter-js";
 
@@ -23,7 +16,6 @@ const createRoom = (roomData: IRoomData) => {
     gameLoopInterval: null,
     engineData: null,
     gameState: {
-      gameStatus: GameStatus.WaitingPlayers,
       score: {
         blue: 0,
         red: 0,
@@ -36,6 +28,7 @@ const createRoom = (roomData: IRoomData) => {
       },
     },
   };
+  roomData.gameStatus = GameStatus.WaitingPlayers;
   rooms[roomData.id] = roomObject;
   io.to("lobby").emit("roomCreated", roomData);
 };
@@ -59,7 +52,6 @@ const checkIfPlayerExistisInSomeTeam = (room: string, username: string): string 
 };
 
 const getPlayersUsername = (room: string): string[] => {
-  const roomObject = rooms[room];
   const roomData = rooms[room].data;
   const playersUsername: string[] = [];
   roomData.teams.blue.players.forEach((player) => {
@@ -109,11 +101,17 @@ const initRoomGame = (room: string) => {
     winner: "draw",
     playersInfos: getPositionsOfPlayersBodies(room),
     ballPosition: roomObject.engineData.ball.position,
-    gameStatus: GameStatus.Playing,
   };
-
-  io.to(room).emit("startGame", roomData);
-  gameLoop(roomObject.gameLoopInterval, roomObject.engineData, roomObject.gameState, room, io);
+  roomData.gameStatus = GameStatus.Playing;
+  io.to(room).emit("gameStarted", roomData);
+  gameLoop(
+    roomObject.gameLoopInterval,
+    roomObject.engineData,
+    roomObject.gameState,
+    room,
+    roomData,
+    io
+  );
 };
 
 const insertPlayerInTeam = (room: string, team: string, username: string, socket: Socket) => {
@@ -128,12 +126,6 @@ const insertPlayerInTeam = (room: string, team: string, username: string, socket
   roomData.teams[team].players.push(player);
   io.to(room).emit("joinedToTeam", roomData);
   io.to("lobby").emit("roomUpdated", roomData);
-  const totalPlayers = roomData.teams.blue.players.length + roomData.teams.red.players.length;
-
-  console.log(`user ${username} joined room ${room} on team ${team}`);
-  if (totalPlayers === roomData.numberOfPlayers) {
-    initRoomGame(room);
-  }
 };
 
 const generateNewVelocityByMove = (
@@ -180,7 +172,6 @@ export const setupSocket = () => {
     });
 
     socket.on("createRoom", (roomData: IRoomData, callback: Function) => {
-      console.log("roomData", roomData);
       callback("success");
       createRoom(roomData);
     });
@@ -193,11 +184,10 @@ export const setupSocket = () => {
     });
 
     socket.on("joinTeam", ({ room, team, username }) => {
-      const roomObject = rooms[room];
       const roomData = rooms[room].data;
       if (!rooms[room]) {
         socket.emit("error", "Room does not exist");
-      } else if (roomObject.gameState.gameStatus !== GameStatus.WaitingPlayers) {
+      } else if (roomData.gameStatus !== GameStatus.WaitingPlayers) {
         socket.emit("error", "Game already started");
       } else if (roomData.teams[team].players.length >= roomData.numberOfPlayers / 2) {
         socket.emit("error", "Team is full");
@@ -215,11 +205,10 @@ export const setupSocket = () => {
         return socket.emit("error", "Room does not exist");
       }
       const roomData = rooms[room].data;
-      const roomObject = rooms[room];
       console.log("user joined room", room);
       const teamOfPlayer = checkIfPlayerExistisInSomeTeam(room, username);
 
-      if (roomObject.gameState.gameStatus === GameStatus.Playing) {
+      if (roomData.gameStatus === GameStatus.Playing) {
         if (teamOfPlayer !== "no team") {
           roomData.teams[teamOfPlayer].players.find(
             (player: IPlayer) => player.username === username
@@ -228,6 +217,17 @@ export const setupSocket = () => {
       }
       socket.join(room);
       socket.emit("joinedRoom", roomData);
+    });
+
+    socket.on("startGame", ({ room, username }) => {
+      if (username !== rooms[room].data.owner) return;
+
+      const roomData = rooms[room].data;
+      const totalPlayers = roomData.teams.blue.players.length + roomData.teams.red.players.length;
+      if (totalPlayers === roomData.numberOfPlayers) {
+        console.log("game started", room);
+        initRoomGame(room);
+      }
     });
 
     socket.on("move", ({ move, username, room }) => {
@@ -239,10 +239,10 @@ export const setupSocket = () => {
       }
     });
 
-    socket.on("message", (data) => {
-      io.to(data.room).emit("newMessage", {
-        text: data.text,
-        author: data.author,
+    socket.on("message", ({ room, text, author }) => {
+      io.to(room).emit("newMessage", {
+        text,
+        author,
         id: uuidv4(),
       });
     });
