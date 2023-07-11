@@ -3,12 +3,16 @@ import Matter from "matter-js";
 import ServerAndSocket from "../utils/serverAndSocket.js";
 import { GameStatus, IGameState, IRoomData } from "../events/types.js";
 import { Server } from "socket.io";
+import { v4 as uuidv4 } from "uuid";
 // const io = ServerAndSocket.getInstance().io;
 
 export interface IPlayerEngineData {
   body: Matter.Body;
   detector: Matter.Detector;
+  boostDetector: Matter.Detector;
   team: "blue" | "red";
+  boost: number;
+  username: string;
 }
 
 export interface IPlayerBodies {
@@ -29,6 +33,9 @@ export interface IEngineData {
   detectorGoalA: Matter.Detector;
   detectorGoalB: Matter.Detector;
   playersBodies: IPlayerBodies;
+  paddlesData: {
+    [key: string]: { x: number; y: number; isTaken: boolean; id: string };
+  };
 }
 
 const PLAYER_RADIUS = 30;
@@ -42,7 +49,8 @@ const generateBodiesByTeam = (
   teamPlayers: string[],
   ball: Matter.Body,
   playersBodyObj: IPlayerBodies,
-  team: "blue" | "red"
+  team: "blue" | "red",
+  paddles: Matter.Body[]
 ) => {
   const startPosition = 360 - (teamPlayers.length - 1) * 40;
   for (let i = 0; i < teamPlayers.length; i++) {
@@ -60,18 +68,29 @@ const generateBodiesByTeam = (
     const detector = Matter.Detector.create({
       bodies: [ball, playerBody],
     });
+    const boostDetector = Matter.Detector.create({
+      bodies: [playerBody, ...paddles],
+    });
     playersBodyObj[teamPlayers[i]] = {
       body: playerBody,
       detector,
+      boostDetector,
       team,
+      boost: 0,
+      username: teamPlayers[i],
     };
   }
 };
 
-const generatePlayersBodies = (bluePlayers: string[], redPlayers: string[], ball: Matter.Body) => {
+const generatePlayersBodies = (
+  bluePlayers: string[],
+  redPlayers: string[],
+  ball: Matter.Body,
+  paddles: Matter.Body[]
+) => {
   const players: IPlayerBodies = {};
-  generateBodiesByTeam(bluePlayers, ball, players, "blue");
-  generateBodiesByTeam(redPlayers, ball, players, "red");
+  generateBodiesByTeam(bluePlayers, ball, players, "blue", paddles);
+  generateBodiesByTeam(redPlayers, ball, players, "red", paddles);
   return players;
 };
 
@@ -110,6 +129,27 @@ export const createEngine = ({
     isStatic: true,
   };
 
+  const paddlesData = {
+    paddleA: { x: 190, y: 125, isTaken: false, id: "paddleA" },
+    paddleB: { x: 190, y: 595, isTaken: false, id: "paddleB" },
+    paddleC: { x: 640, y: 595, isTaken: false, id: "paddleC" },
+    paddleD: { x: 1090, y: 595, isTaken: false, id: "paddleD" },
+    paddleE: { x: 640, y: 125, isTaken: false, id: "paddleE" },
+    paddleF: { x: 1090, y: 125, isTaken: false, id: "paddleF" },
+  };
+  const paddles = Object.values(paddlesData).map((position) => {
+    const body = Matter.Bodies.circle(position.x, position.y, 10, {
+      isStatic: true,
+      inertia: 0,
+      friction: 0,
+      frictionStatic: 0,
+      frictionAir: 0,
+      label: position.id,
+    });
+    console.log(body.label);
+    return body;
+  });
+
   const goalA = Matter.Bodies.rectangle(
     goalWidth / 2,
     engine.world.bounds.max.y / 2,
@@ -143,7 +183,7 @@ export const createEngine = ({
     wallSettings
   );
 
-  const playersBodies = generatePlayersBodies(blueTeam, redTeam, ball);
+  const playersBodies = generatePlayersBodies(blueTeam, redTeam, ball, paddles);
 
   Matter.World.add(engine.world, [
     goalA,
@@ -178,6 +218,7 @@ export const createEngine = ({
     detectorGoalA,
     detectorGoalB,
     playersBodies,
+    paddlesData,
   };
 };
 
@@ -219,6 +260,25 @@ const checkGoal = (engineData: IEngineData, gameState: IGameState, roomData: IRo
     gameState.score.blue++;
     resetBall(engineData.ball);
     resetPlayers(engineData.playersBodies);
+  }
+};
+
+const checkIfBoostIsTaken = (engineData: IEngineData, gameState: IGameState) => {
+  for (const username in engineData.playersBodies) {
+    const playerData = engineData.playersBodies[username];
+    const playerCollision = Matter.Detector.collisions(playerData.boostDetector);
+
+    if (playerCollision.length > 0 && gameState.playersData[username].boost < 100) {
+      const paddleId = playerCollision[0].bodyA.label;
+      const paddleTaked = engineData.paddlesData[paddleId];
+      if (paddleTaked && !paddleTaked.isTaken) {
+        paddleTaked.isTaken = true;
+        setTimeout(() => {
+          paddleTaked.isTaken = false;
+        }, 10000);
+      }
+      gameState.playersData[username].boost += 10;
+    }
   }
 };
 
@@ -276,7 +336,7 @@ export const gameLoop = (
   if (roomData.gameStatus === GameStatus.Playing) {
     Matter.Engine.update(engineData.engine, 1000 / 60);
     checkGoal(engineData, gameState, roomData);
-
+    checkIfBoostIsTaken(engineData, gameState);
     if (checkIfGameIsFinished(gameState, roomData.goalsToWin)) {
       roomData.gameStatus = GameStatus.FinishedGame;
       io.to(roomName).emit("gameFinished", checkWhatTeamWon(gameState));
@@ -287,7 +347,10 @@ export const gameLoop = (
       }, 10000);
     }
 
-    io.to(roomName).emit("gameState", gameState);
+    io.to(roomName).emit("gameState", {
+      ...gameState,
+      paddlesData: engineData.paddlesData,
+    });
     gameLoopInterval = setTimeout(
       () => gameLoop(gameLoopInterval, engineData, gameState, roomName, roomData, io),
       1000 / 60

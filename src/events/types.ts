@@ -31,6 +31,7 @@ interface IPosition {
 export interface IPlayerInfo {
   position: Matter.Vector;
   team: "blue" | "red";
+  boost: number;
 }
 
 export interface IGameState {
@@ -39,7 +40,9 @@ export interface IGameState {
     red: number;
   };
   winner: "blue" | "red" | "draw";
-  playersInfos: IPlayerInfo[];
+  playersData: {
+    [key: string]: IPlayerInfo;
+  };
   ballPosition: IPosition;
 }
 

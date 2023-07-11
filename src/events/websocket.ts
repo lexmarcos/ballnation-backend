@@ -21,7 +21,7 @@ const createRoom = (roomData: IRoomData) => {
         red: 0,
       },
       winner: "draw",
-      playersInfos: null,
+      playersData: null,
       ballPosition: {
         x: 0,
         y: 0,
@@ -63,17 +63,20 @@ const getPlayersUsername = (room: string): string[] => {
   return playersUsername;
 };
 
-const getPositionsOfPlayersBodies = (room: string) => {
+const getPlayersDataOfEngine = (room: string) => {
   const players = getPlayersUsername(room);
-  const positions: IPlayerInfo[] = [];
+  const data: {
+    [key: string]: IPlayerInfo;
+  } = {};
   for (const player of players) {
     const playerBody = rooms[room].engineData.playersBodies[player];
-    positions.push({
+    data[player] = {
       position: playerBody.body.position,
       team: checkIfPlayerExistisInSomeTeam(room, player) as "blue" | "red",
-    });
+      boost: playerBody.boost,
+    };
   }
-  return positions;
+  return data;
 };
 
 const getPlayersUsernameByTeam = (room: string, team: string): string[] => {
@@ -99,7 +102,7 @@ const initRoomGame = (room: string) => {
       red: 0,
     },
     winner: "draw",
-    playersInfos: getPositionsOfPlayersBodies(room),
+    playersData: getPlayersDataOfEngine(room),
     ballPosition: roomObject.engineData.ball.position,
   };
   roomData.gameStatus = GameStatus.Playing;
@@ -128,11 +131,22 @@ const insertPlayerInTeam = (room: string, team: string, username: string, socket
   io.to("lobby").emit("roomUpdated", roomData);
 };
 
+const boostPlayer = (room: string, playerBody: Matter.Body, username: string) => {
+  Matter.Body.setVelocity(playerBody, {
+    x: playerBody.velocity.x + 6,
+    y: playerBody.velocity.y + 6,
+  });
+  setTimeout(() => {
+    rooms[room].gameState.playersData[username].boost = -10;
+  }, 100);
+};
+
 const generateNewVelocityByMove = (
   move: string,
   playerBody: Matter.Body,
   player: IPlayerEngineData,
-  room: IRoom
+  room: IRoom,
+  username: string
 ) => {
   switch (move) {
     case "up":
@@ -147,6 +161,19 @@ const generateNewVelocityByMove = (
     case "right":
       Matter.Body.setVelocity(playerBody, { x: 3, y: playerBody.velocity.y });
       break;
+    case "boostUp":
+      Matter.Body.setVelocity(playerBody, { x: playerBody.velocity.x, y: -6 });
+      break;
+    case "boostDown":
+      Matter.Body.setVelocity(playerBody, { x: playerBody.velocity.x, y: 6 });
+      break;
+    case "boostLeft":
+      Matter.Body.setVelocity(playerBody, { x: -6, y: playerBody.velocity.y });
+      break;
+    case "boostRight":
+      Matter.Body.setVelocity(playerBody, { x: 6, y: playerBody.velocity.y });
+      break;
+
     case "shoot":
       applyForceOnBall(player.detector, room.engineData.ball, playerBody);
       break;
@@ -235,7 +262,7 @@ export const setupSocket = () => {
       if (!roomObject) return console.log("room does not exist");
       const player = roomObject.engineData.playersBodies[username];
       if (player) {
-        generateNewVelocityByMove(move, player.body, player, roomObject);
+        generateNewVelocityByMove(move, player.body, player, roomObject, username);
       }
     });
 
