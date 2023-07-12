@@ -14,9 +14,10 @@ router.post("/signup", async (req, res) => {
     }
 
     const userExists = await User.findOne({ username });
+    const emailExists = await User.findOne({ email });
 
-    if (userExists) {
-      return res.status(400).json({ error: "Username already exists." });
+    if (userExists || emailExists) {
+      return res.status(400).json({ error: "Email or Username already exists." });
     }
 
     const hashedPassword = bcrypt.hashSync(password, 8);
@@ -46,13 +47,9 @@ router.post("/login", async (req, res) => {
 
     const user = await User.findOne({ username });
 
-    if (!user) {
-      return res.status(404).send("No user found.");
-    }
-
     const passwordIsValid = bcrypt.compareSync(password, user.password);
-    if (!passwordIsValid) {
-      return res.status(401).send({ auth: false, token: null });
+    if (!passwordIsValid || !user) {
+      return res.status(401).send("Username or password is invalid.");
     }
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
