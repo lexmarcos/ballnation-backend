@@ -1,4 +1,5 @@
 # BallNation Backend
+<img src="https://raw.githubusercontent.com/lexmarcos/ballnation-frontend/194f455855b9f6f44dc9deae96e0fa434ad1be7e/public/assets/logo.svg" width="300">
 
 ## Instalação ⚙️
 
